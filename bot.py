@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TITLE_TRIGGER_FIRST = int(os.getenv("TITLE_TRIGGER_FIRST", "2"))
+TITLE_TRIGGER_INTERVAL = int(os.getenv("TITLE_TRIGGER_INTERVAL", "10"))
 
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-2.5-flash")
@@ -36,7 +38,7 @@ MAX_MESSAGES_FOR_CONTEXT = 20
 
 
 def should_update_title(count: int) -> bool:
-    return count == 2 or (count > 2 and (count - 2) % 10 == 0)
+    return count == TITLE_TRIGGER_FIRST or (count > TITLE_TRIGGER_FIRST and (count - TITLE_TRIGGER_FIRST) % TITLE_TRIGGER_INTERVAL == 0)
 
 
 async def fetch_recent_messages(thread: discord.Thread) -> list[discord.Message]:
