@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>/Users/kjlee/Projects/discord-thread-titler/venv/bin/python3</string>
         <string>/Users/kjlee/Projects/discord-thread-titler/bot.py</string>
     </array>
 

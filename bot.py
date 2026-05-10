@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import logging
 import discord
@@ -16,7 +18,7 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.0-flash-lite")
+gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 # thread_id -> 봇 메시지 제외 누적 카운트
 thread_message_counts: dict[int, int] = {}
@@ -102,6 +104,10 @@ async def on_ready():
 
 @client.event
 async def on_message(message: discord.Message):
+    # 모든 메시지 수신 확인용 (디버그)
+    logger.info("메시지 수신: channel=%s type=%s author=%s content=%s",
+                message.channel, type(message.channel).__name__, message.author, message.content[:50])
+
     if not isinstance(message.channel, discord.Thread):
         return
 
@@ -112,7 +118,7 @@ async def on_message(message: discord.Message):
     thread_message_counts[thread_id] = thread_message_counts.get(thread_id, 0) + 1
     count = thread_message_counts[thread_id]
 
-    logger.debug(
+    logger.info(
         "스레드 메시지 수신 (thread_id=%d, count=%d, author=%s)",
         thread_id, count, message.author,
     )
