@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import logging
 import discord
 import google.generativeai as genai
@@ -35,6 +36,13 @@ TITLE_PROMPT = """\
 """
 
 MAX_MESSAGES_FOR_CONTEXT = 20
+
+# 툴 사용 메시지 패턴: "💻 terminal: "..." 형태 제외
+TOOL_USE_PATTERN = re.compile(r'^\S+\s+[\w_-]+:\s+"')
+
+
+def is_tool_use_message(content: str) -> bool:
+    return bool(TOOL_USE_PATTERN.match(content))
 
 
 def should_update_title(count: int) -> bool:
@@ -113,7 +121,8 @@ async def on_message(message: discord.Message):
     if not isinstance(message.channel, discord.Thread):
         return
 
-    if message.author.bot:
+    # 툴 사용 메시지 (💻 terminal: "..." 등) 카운팅 제외
+    if is_tool_use_message(message.content):
         return
 
     thread_id = message.channel.id
