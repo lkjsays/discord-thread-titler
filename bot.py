@@ -25,6 +25,10 @@ gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 # thread_id -> 봇 메시지 제외 누적 카운트
 thread_message_counts: dict[int, int] = {}
+# 카운트 초기화 진행 중인 thread_id 집합 (race condition 방지)
+_initializing: set[int] = set()
+# 제목 갱신 진행 중인 (thread_id, count) 집합 (중복 트리거 방어)
+_updating: set[tuple[int, int]] = set()
 
 TITLE_PROMPT = """\
 아래는 Discord 스레드의 최근 대화 내용입니다.
@@ -74,8 +78,8 @@ async def generate_title(thread: discord.Thread) -> str | None:
             return None
 
         prompt = TITLE_PROMPT.format(messages=formatted)
-        response = gemini_model.generate_content(prompt)
-        title = response.text.strip()
+        response = await gemini_model.generate_content_async(prompt)
+        title = response.text.strip().strip('"\'').rstrip('.。')
 
         if len(title) > 100:
             title = title[:100]
@@ -86,18 +90,23 @@ async def generate_title(thread: discord.Thread) -> str | None:
         return None
 
 
-async def update_thread_title(thread: discord.Thread) -> None:
-    title = await generate_title(thread)
-    if not title:
+async def update_thread_title(thread: discord.Thread, count: int) -> None:
+    key = (thread.id, count)
+    if key in _updating:
         return
-
+    _updating.add(key)
     try:
-        await thread.edit(name=title)
+        title = await generate_title(thread)
+        if not title:
+            return
+        await thread.edit(name=title, reason=f"AI auto-rename (msg #{count})")
         logger.info("제목 갱신 완료 (thread_id=%d): %s", thread.id, title)
     except discord.Forbidden:
         logger.warning("스레드 제목 수정 권한 없음 (thread_id=%d)", thread.id)
     except discord.HTTPException as e:
         logger.error("Discord API 오류 (thread_id=%d): %s", thread.id, e)
+    finally:
+        _updating.discard(key)
 
 
 intents = discord.Intents.default()
@@ -105,6 +114,27 @@ intents.message_content = True
 intents.guild_messages = True
 
 client = discord.Client(intents=intents)
+
+
+async def initialize_thread_count(thread: discord.Thread) -> int:
+    """해당 스레드의 실제 메시지 수를 Discord API로 조회해서 카운트 초기화."""
+    count = 0
+    try:
+        async for msg in thread.history(limit=None, oldest_first=True):
+            if msg.author.bot:
+                continue
+            if is_tool_use_message(msg.content):
+                continue
+            count += 1
+        thread_message_counts[thread.id] = count
+        logger.info(
+            "카운트 초기화 (thread_id=%d, name=%r, count=%d)",
+            thread.id, thread.name, count,
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        logger.warning("카운트 초기화 실패 (thread_id=%d): %s", thread.id, e)
+        thread_message_counts[thread.id] = 0
+    return thread_message_counts[thread.id]
 
 
 @client.event
@@ -115,10 +145,14 @@ async def on_ready():
 @client.event
 async def on_message(message: discord.Message):
     # 모든 메시지 수신 확인용 (디버그)
-    logger.info("메시지 수신: channel=%s type=%s author=%s content=%s",
+    logger.debug("메시지 수신: channel=%s type=%s author=%s content=%s",
                 message.channel, type(message.channel).__name__, message.author, message.content[:50])
 
     if not isinstance(message.channel, discord.Thread):
+        return
+
+    # 봇 메시지 카운팅 제외
+    if message.author.bot:
         return
 
     # 툴 사용 메시지 (💻 terminal: "..." 등) 카운팅 제외
@@ -126,6 +160,18 @@ async def on_message(message: discord.Message):
         return
 
     thread_id = message.channel.id
+
+    # 처음 보는 스레드면 실제 히스토리로 카운트 초기화
+    if thread_id not in thread_message_counts and thread_id not in _initializing:
+        _initializing.add(thread_id)
+        try:
+            await initialize_thread_count(message.channel)
+        finally:
+            _initializing.discard(thread_id)
+    elif thread_id in _initializing:
+        # 초기화 중에 들어온 메시지는 스킵 (history fetch에 이미 포함됨)
+        return
+
     thread_message_counts[thread_id] = thread_message_counts.get(thread_id, 0) + 1
     count = thread_message_counts[thread_id]
 
@@ -138,7 +184,7 @@ async def on_message(message: discord.Message):
         logger.info(
             "제목 갱신 트리거 (thread_id=%d, count=%d)", thread_id, count
         )
-        await update_thread_title(message.channel)
+        await update_thread_title(message.channel, count)
 
 
 if __name__ == "__main__":
